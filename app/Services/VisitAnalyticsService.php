@@ -141,41 +141,39 @@ class VisitAnalyticsService
      */
     public function getWeeklyTrend(Carbon $startDate, Carbon $endDate): Collection
     {
-        // Requirement 4.5: Throw exception if period < 14 days
-        // Use floored difference to match whole days
-        if ($startDate->copy()->startOfDay()->diffInDays($endDate->copy()->endOfDay(), false) < 14) {
+        // Require at least 7 days span to show weekly trend meaningfully
+        if ($startDate->copy()->startOfDay()->diffInDays($endDate->copy()->endOfDay(), false) < 7) {
             throw \App\Exceptions\InsufficientDataException::forWeeklyTrend();
         }
 
         // Requirement 11.3: Cache expensive trend queries for 5 minutes
+        // Store as plain PHP array to avoid deserialization issues with Collection objects
         $cacheKey = "analytics.weekly_trend.{$startDate->format('Ymd')}.{$endDate->format('Ymd')}";
 
-        return Cache::remember($cacheKey, now()->addMinutes(5), function () use ($startDate, $endDate) {
-            // Requirements 4.1, 4.2, 4.4: Group visits by ISO week (Monday-Sunday)
-            // Fetch all visits and group them in PHP for database compatibility
+        $cached = Cache::remember($cacheKey, now()->addMinutes(5), function () use ($startDate, $endDate) {
             $visits = Visit::query()
+                ->select('check_in_at')
                 ->inPeriod($startDate, $endDate)
                 ->excludingCancelled()
                 ->orderBy('check_in_at')
                 ->get();
 
-            // Group by ISO week start date (Monday)
-            $weeklyData = $visits->groupBy(function ($visit) {
-                // Get the Carbon instance for check_in_at
-                $checkInDate = Carbon::parse($visit->check_in_at);
-
-                // Find the Monday of this week (ISO week starts on Monday)
-                return $checkInDate->copy()->startOfWeek(Carbon::MONDAY)->toDateString();
+            // Group by ISO week start date (Monday) and return as plain array
+            return $visits->groupBy(function ($visit) {
+                return Carbon::parse($visit->check_in_at)
+                    ->copy()
+                    ->startOfWeek(Carbon::MONDAY)
+                    ->toDateString();
             })->map(function ($weekVisits, $weekStart) {
-                // Requirement 4.3: Format data with week_start label and count
                 return [
                     'week_start' => $weekStart,
-                    'count' => $weekVisits->count(),
+                    'count'      => $weekVisits->count(),
                 ];
-            })->sortBy('week_start')->values();
-
-            return $weeklyData;
+            })->sortBy('week_start')->values()->toArray(); // store as plain array
         });
+
+        // Always wrap back into a Collection on the way out
+        return collect(is_array($cached) ? $cached : []);
     }
 
     /**
@@ -188,25 +186,21 @@ class VisitAnalyticsService
      */
     public function getMonthlyTrend(Carbon $startDate, Carbon $endDate): Collection
     {
-        // Check if period is at least 30 days
-        if ($startDate->diffInDays($endDate) < 30) {
+        // Require at least 2 days span to show monthly trend (at least 1 data point)
+        if ($startDate->diffInDays($endDate) < 2) {
             throw \App\Exceptions\InsufficientDataException::forMonthlyTrend();
         }
 
         // Requirement 11.3: Cache expensive trend queries for 5 minutes
+        // Store as plain PHP array to avoid deserialization issues
         $cacheKey = "analytics.monthly_trend.{$startDate->format('Ymd')}.{$endDate->format('Ymd')}";
 
-        return Cache::remember($cacheKey, now()->addMinutes(5), function () use ($startDate, $endDate) {
-            // Use database-agnostic date formatting
+        $cached = Cache::remember($cacheKey, now()->addMinutes(5), function () use ($startDate, $endDate) {
             $driver = DB::connection()->getDriverName();
 
-            if ($driver === 'sqlite') {
-                // SQLite uses strftime
-                $monthFormat = "strftime('%Y-%m', check_in_at)";
-            } else {
-                // MySQL/PostgreSQL use DATE_FORMAT
-                $monthFormat = "DATE_FORMAT(check_in_at, '%Y-%m')";
-            }
+            $monthFormat = $driver === 'sqlite'
+                ? "strftime('%Y-%m', check_in_at)"
+                : "DATE_FORMAT(check_in_at, '%Y-%m')";
 
             $results = Visit::query()
                 ->selectRaw("{$monthFormat} as month, COUNT(*) as count")
@@ -216,7 +210,6 @@ class VisitAnalyticsService
                 ->orderBy('month', 'asc')
                 ->get();
 
-            // Transform results to include formatted label
             return $results->map(function ($item) {
                 $monthDate = Carbon::createFromFormat('Y-m', $item->month);
                 return [
@@ -224,8 +217,10 @@ class VisitAnalyticsService
                     'label' => $monthDate->format('M Y'),
                     'count' => $item->count,
                 ];
-            });
+            })->toArray(); // store as plain array
         });
+
+        return collect(is_array($cached) ? $cached : []);
     }
 
     /**

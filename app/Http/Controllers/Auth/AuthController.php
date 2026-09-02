@@ -78,8 +78,9 @@ class AuthController extends Controller
                 'timestamp' => now(),
             ]);
 
-            // Delete remember tokens
-            $user->tokens()->delete();
+            // Clear the remember me token from database
+            $user->setRememberToken(null);
+            $user->save();
         }
 
         // Logout the user

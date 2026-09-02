@@ -6,6 +6,7 @@ use App\Exceptions\InsufficientDataException;
 use App\Services\VisitAnalyticsService;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Carbon\Carbon;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Log;
@@ -47,10 +48,14 @@ class AnalyticsController extends Controller
      * @param Request $request
      * @return View
      */
-    public function index(Request $request): View
+    public function index(Request $request): View|RedirectResponse
     {
-        // Set default period if not provided
-        $request->merge(['period' => $request->get('period', 'today')]);
+        // Default to the last three months without issuing a redirect.
+        $request->mergeIfMissing([
+            'period' => 'custom',
+            'start_date' => now()->subMonths(3)->startOfDay()->format('Y-m-d'),
+            'end_date' => now()->format('Y-m-d'),
+        ]);
 
         // Requirements 2.5, 2.6, 12.3: Validate all request inputs
         $validated = $request->validate([
