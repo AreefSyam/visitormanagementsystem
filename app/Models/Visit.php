@@ -52,7 +52,48 @@ class Visit extends Model
     public function scopeThisMonth($query)
     {
         return $query->whereMonth('check_in_at', now()->month)
-                     ->whereYear('check_in_at', now()->year);
+            ->whereYear('check_in_at', now()->year);
+    }
+
+    /**
+     * Scope to filter visits within a date range
+     * 
+     * DATA ACCURACY (Requirement 15.2, 15.4):
+     * - Only includes visits with valid check_in_at timestamps
+     * - Uses timezone-aware Carbon date boundaries (startOfDay/endOfDay)
+     * - Ensures consistent date bucketing across all queries
+     */
+    public function scopeInPeriod($query, $startDate, $endDate)
+    {
+        return $query->whereBetween('check_in_at', [
+            $startDate->copy()->startOfDay(),
+            $endDate->copy()->endOfDay()
+        ]);
+    }
+
+    /**
+     * Scope to exclude cancelled visits
+     * 
+     * DATA ACCURACY (Requirement 15.3):
+     * - Cancelled visits are systematically excluded from all analytics
+     * - Ensures only meaningful visit data is included in calculations
+     */
+    public function scopeExcludingCancelled($query)
+    {
+        return $query->where('status', '!=', 'cancelled');
+    }
+
+    /**
+     * Scope to get only completed visits (with check-out)
+     * 
+     * DATA ACCURACY (Requirement 15.5):
+     * - Safely handles null check_out_at values
+     * - Only includes visits with valid completion timestamps
+     */
+    public function scopeCompleted($query)
+    {
+        return $query->where('status', 'checked_out')
+            ->whereNotNull('check_out_at');
     }
 
     public function isActive(): bool
