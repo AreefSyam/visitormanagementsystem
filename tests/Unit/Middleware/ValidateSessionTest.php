@@ -165,6 +165,73 @@ class ValidateSessionTest extends TestCase
     }
 
     #[Test]
+    public function it_destroys_session_when_absolute_lifetime_exceeded_even_if_active(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $request = Request::create('/test', 'GET');
+        $request->setLaravelSession($this->app['session.store']);
+
+        $sessionId = $request->session()->getId();
+        $userAgent = 'Mozilla/5.0 Test Browser';
+
+        // Activity is recent (well within the 120-minute inactivity timeout),
+        // but the session was created more than 8 hours ago.
+        DB::table('sessions')->insert([
+            'id' => $sessionId,
+            'user_id' => $user->id,
+            'ip_address' => '127.0.0.1',
+            'user_agent' => $userAgent,
+            'payload' => '',
+            'last_activity' => time(),
+        ]);
+
+        // login_at was stamped 8 hours + 1 minute ago.
+        $request->session()->put('login_at', time() - (8 * 3600 + 60));
+        $request->headers->set('User-Agent', $userAgent);
+
+        $next = fn($req) => response('OK');
+        $response = $this->middleware->handle($request, $next);
+
+        $this->assertEquals(302, $response->getStatusCode());
+        $this->assertStringContainsString('/login', $response->headers->get('Location'));
+        $this->assertFalse(Auth::check());
+    }
+
+    #[Test]
+    public function it_allows_session_within_absolute_lifetime(): void
+    {
+        $user = User::factory()->create();
+        $this->actingAs($user);
+
+        $request = Request::create('/test', 'GET');
+        $request->setLaravelSession($this->app['session.store']);
+
+        $sessionId = $request->session()->getId();
+        $userAgent = 'Mozilla/5.0 Test Browser';
+
+        DB::table('sessions')->insert([
+            'id' => $sessionId,
+            'user_id' => $user->id,
+            'ip_address' => '127.0.0.1',
+            'user_agent' => $userAgent,
+            'payload' => '',
+            'last_activity' => time(),
+        ]);
+
+        // login_at was stamped 7 hours 59 minutes ago (within the 8-hour cap).
+        $request->session()->put('login_at', time() - (7 * 3600 + 59 * 60));
+        $request->headers->set('User-Agent', $userAgent);
+
+        $next = fn($req) => response('OK');
+        $response = $this->middleware->handle($request, $next);
+
+        $this->assertEquals('OK', $response->getContent());
+        $this->assertTrue(Auth::check());
+    }
+
+    #[Test]
     public function it_allows_session_within_timeout_period(): void
     {
         $user = User::factory()->create();

@@ -11,9 +11,16 @@ use Symfony\Component\HttpFoundation\Response;
 class ValidateSession
 {
     /**
-     * Session timeout in seconds (120 minutes).
+     * Session timeout in seconds (120 minutes of inactivity).
      */
     private const SESSION_TIMEOUT = 7200; // 120 minutes * 60 seconds
+
+    /**
+     * Absolute maximum session lifetime in seconds (8 hours), regardless of
+     * activity. Once reached, the session is force-expired even if the user
+     * has been continuously active.
+     */
+    private const ABSOLUTE_SESSION_LIFETIME = 28800; // 8 hours * 60 * 60 seconds
 
     /**
      * Handle an incoming request.
@@ -21,7 +28,8 @@ class ValidateSession
      * Validates session integrity by checking:
      * - Session exists in database
      * - User agent matches session record
-     * - Session hasn't exceeded timeout (120 minutes)
+     * - Session hasn't exceeded the inactivity timeout (120 minutes)
+     * - Session hasn't exceeded the absolute maximum lifetime (8 hours)
      *
      * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
      */
@@ -56,6 +64,19 @@ class ValidateSession
 
         if (($currentTime - $lastActivity) > self::SESSION_TIMEOUT) {
             return $this->destroySessionAndRedirect($request, 'Session has expired due to inactivity');
+        }
+
+        // Check absolute session lifetime (8 hours since login), regardless
+        // of activity. `login_at` is stamped by AuthController on login; if a
+        // pre-existing session lacks it (e.g. it was created before this
+        // check was introduced), stamp it now so the 8-hour clock starts.
+        $loginAt = $request->session()->get('login_at');
+
+        if ($loginAt === null) {
+            $loginAt = $currentTime;
+            $request->session()->put('login_at', $loginAt);
+        } elseif (($currentTime - $loginAt) > self::ABSOLUTE_SESSION_LIFETIME) {
+            return $this->destroySessionAndRedirect($request, 'Session has exceeded the maximum 8-hour lifetime');
         }
 
         // Update last_activity timestamp

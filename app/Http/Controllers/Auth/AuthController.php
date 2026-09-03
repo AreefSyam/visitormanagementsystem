@@ -32,6 +32,11 @@ class AuthController extends Controller
             // Regenerate session ID to prevent session fixation attacks
             $request->session()->regenerate();
 
+            // Stamp the login time so ValidateSession can enforce the
+            // absolute 8-hour maximum session lifetime, independent of
+            // activity-based timeout.
+            $request->session()->put('login_at', time());
+
             // Handle "Remember Me" functionality
             if ($request->boolean('remember')) {
                 Auth::viaRemember();
